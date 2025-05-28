@@ -1,12 +1,8 @@
 import tempfile
-import json
-from array import array
-from copyreg import pickle
 from pathlib import Path
 from enum import Enum, IntEnum
 from time import time
-from mathutils import Vector, Matrix
-import mathutils
+from mathutils import Matrix
 
 # TODO SST: This is a temporary workaround
 import sys
@@ -150,10 +146,9 @@ class SSTTESS_tessellate(bpy.types.Operator):
 
 		# TODO SST: Change this
 		device = torch.device('cpu')
-		from .process_object import process_object, process_object_2, add_tessellated_to_blender
 		from .drpg import ParametricPatches
-		from .drpg import bezier_sphere, SurfaceTessellator
-		from .process_object import create_tessellated_patches, add_tessellated_to_blender
+		from .drpg import SurfaceTessellator
+		from .process_object import add_tessellated_to_blender
 
 		# END CLASSES/utils
 		all_start = time()
@@ -169,8 +164,6 @@ class SSTTESS_tessellate(bpy.types.Operator):
 		uv_grid_res_y = self.uv_grid_res_y
 
 		import torch
-		import numpy as np
-		import bpy
 		from pathlib import Path
 
 		tessellator = SurfaceTessellator(uv_grid_resolution=(uv_grid_res_x, uv_grid_res_y),
@@ -272,13 +265,10 @@ class SSTTESS_TessellateBezier(bpy.types.Operator):
 		# Classes that depend on torch are imported here, otherwise the plugin fails
 		import torch
 		import numpy as np
-		import bmesh
-		from collections import defaultdict
 		from .drpg import ParametricPatches
 
 		# TODO SST: Change this
 		device = torch.device('cpu')
-		from .process_object import process_object, process_object_2, create_tessellated_patches, mesh_to_parametric_patches, blender_to_parametric_patches
 
 		def create_bezier_patch_mesh(patches, name="BezierPatches"):
 			# Convert torch tensors to numpy arrays
@@ -370,8 +360,6 @@ class SSTTESS_TessellateBezier(bpy.types.Operator):
 		n = 3
 		uv_grid_res_x = 64
 		uv_grid_res_y = 64
-
-		import pickle
 
 		print(f"Obj length: {len(objlist)}")
 		for obj in objlist:
@@ -516,7 +504,7 @@ class SSTTESS_GenerateBezierSphere(bpy.types.Operator):
 		import numpy as np
 		import torch
 
-		from .drpg import bezier_sphere, generate_grid_faces, ParametricPatches
+		from .drpg import bezier_sphere, ParametricPatches
 
 		device = torch.device("cpu")
 		patches = bezier_sphere(n=self.number_of_patches, device=device)
@@ -589,7 +577,6 @@ class SSTTESS_GenerateBezierSphere(bpy.types.Operator):
 			return obj
 
 		import bpy
-		import bmesh
 
 		def create_blender_mesh_from_patches(patches: ParametricPatches, name="ParametricPatchObject"):
 			# Convert to CPU numpy arrays
@@ -670,7 +657,7 @@ class SSTTESS_GenerateTessellatedBezierSphere(bpy.types.Operator):
 		import torch
 
 		from .drpg import bezier_sphere, SurfaceTessellator
-		from .process_object import create_tessellated_patches, add_tessellated_to_blender
+		from .process_object import add_tessellated_to_blender
 
 		device = torch.device("cpu")
 		n = 5
@@ -738,7 +725,7 @@ class SSTTESS_GenerateTessellatedBezierSphereWithNURBS(bpy.types.Operator):
 		import torch
 
 		from .drpg import bezier_sphere, SurfaceTessellator
-		from .process_object import create_tessellated_patches, add_tessellated_to_blender
+		from .process_object import add_tessellated_to_blender
 
 		device = torch.device("cpu")
 		n = 5

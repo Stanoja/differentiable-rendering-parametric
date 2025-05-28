@@ -5,7 +5,6 @@ import imageio
 from largesteps.parameterize import to_differential, from_differential
 from largesteps.optimize import AdamUniform
 import nvdiffrast.torch as dr
-import matplotlib.pyplot as plt
 from pathlib import Path
 import math
 from umbra import MeshViewer

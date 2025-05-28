@@ -2,10 +2,8 @@ from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 import copy
 import drjit
 import imageio
-import math
 import matplotlib.pyplot as plt
 import mitsuba as mi
-from mitsuba.scalar_rgb import Transform4f as T
 import numpy as np
 from pathlib import Path
 from umbra import MeshViewer
@@ -13,7 +11,6 @@ import torch
 from tqdm import tqdm
 from typing import List
 
-from NURBSDiff.surf_eval import SurfEval
 from drpg import generate_grid_faces, save_mesh, compute_lsig_matrix, create_planar_grid, write_quad_mesh, ParametricPatches, SurfaceTessellator, SurfaceType
 
 # This code is heavily inspired by the Mitsuba 3 caustics optimization tutorial:

@@ -1,8 +1,12 @@
 import tempfile
+import json
+from array import array
+from copyreg import pickle
 from pathlib import Path
 from enum import Enum, IntEnum
 from time import time
-from mathutils import Matrix
+from mathutils import Vector, Matrix
+import mathutils
 
 # TODO SST: This is a temporary workaround
 import sys
@@ -67,55 +71,8 @@ class SurfaceType(Enum):
 
 # PART 4: Blender integration
 
-# TODO SST: Remove if unused
-def flatten_face(obj, poly):
-	coords = [obj.matrix_world @ obj.data.vertices[i].co for i in poly.vertices]
-
-	if len(coords) < 3:
-		raise ValueError("Need at least 3 points to define a plane")
-
-	# Reference point
-	v0, v1, v2 = coords[:3]
-
-	# Construct orthonormal basis
-	tangent = (v1 - v0).normalized()  # x-axis (local)
-	normal = (v1 - v0).cross(v2 - v0).normalized()  # y-axis (local)
-	bitangent = normal.cross(tangent).normalized()  # z-axis (local)
-
-	# Project each vertex into local tangent/bitangent (xz-plane)
-	flattened = []
-	for v in coords:
-		rel = v - v0
-		x = rel.dot(tangent)
-		z = rel.dot(bitangent)  # we call it z now to match the xz-plane
-		flattened.append((x, z))
-
-	xs, zs = zip(*flattened)
-	# scale = (max(xs) - min(xs), max(zs) - min(zs))  # extent in local xz
-	scale = max(max(xs) - min(xs), max(zs) - min(zs)) / 2.0
-
-	# Construct the local-to-world matrix:
-	# Grid space: xz-plane, y-up → tangent, bitangent, normal → x, z, y
-	local_axes = Matrix((
-		tangent,  # x
-		normal,  # y
-		bitangent  # z
-	)).transposed()  # Blender uses column-major matrices
-
-	position = obj.matrix_world @ obj.data.vertices[poly.vertices[0]].co
-	return {
-		"2d_coords": flattened,
-		"normal": normal,
-		"tangent": tangent,
-		"bitangent": bitangent,
-		"scale": scale,
-		"position": position,
-		"local_to_world": Matrix.Translation(v0) @ local_axes.to_4x4()
-	}
-
-
-class SSTTESS_tessellate(bpy.types.Operator):
-	"""My tessellation script"""
+class SSTTESS_Tessellate(bpy.types.Operator):
+	"""My NURBS tessellation addon"""
 	bl_idname = "object.ssttess_tessellate"
 	bl_label = "SST Tessellate object (NURBS)"
 	bl_description = "Tessellate selected texture plane objects"
@@ -146,16 +103,12 @@ class SSTTESS_tessellate(bpy.types.Operator):
 
 		# TODO SST: Change this
 		device = torch.device('cpu')
-		from .drpg import ParametricPatches
-		from .drpg import SurfaceTessellator
+		from .drpg import ParametricPatches, SurfaceTessellator
 		from .process_object import add_tessellated_to_blender
 
 		# END CLASSES/utils
 		all_start = time()
 
-		# ...that have 4 vertices or more
-		# objlist = [o for o in bpy.context.selected_objects if o.type == 'MESH' and len(o.data.vertices) >= 4]
-		# objlist = [o for o in bpy.context.selected_objects if o.type == 'MESH']
 		all_object_types = [o.type for o in context.selected_objects]
 		print(f'ALL OBJECT TYPES: {all_object_types}')
 		objlist = [o for o in context.selected_objects if o.type == 'MESH']
@@ -164,69 +117,22 @@ class SSTTESS_tessellate(bpy.types.Operator):
 		uv_grid_res_y = self.uv_grid_res_y
 
 		import torch
+		import numpy as np
+		import bpy
 		from pathlib import Path
 
 		tessellator = SurfaceTessellator(uv_grid_resolution=(uv_grid_res_x, uv_grid_res_y),
 										 type=SurfaceType.NURBS)  # <- Tessellate as NURBs surface
 
-
-		def blender_object_to_parametric_patches_dynamic(obj, device: torch.device = None) -> ParametricPatches:
-			"""Convert any Blender mesh into ParametricPatches by treating each face as a patch."""
-			if obj.type != 'MESH':
-				raise ValueError("Object must be a mesh")
-
-			mesh = obj.data
-			mesh.calc_loop_triangles()
-
-			patches = ParametricPatches(n=2, m=2, device=device)  # Each face -> 2x2 patch (4 verts)
-
-			for tri in mesh.loop_triangles:
-				if len(tri.vertices) != 3:
-					continue  # skip non-triangles
-
-				# Get triangle vertex coordinates
-				coords = [mesh.vertices[v].co for v in tri.vertices]
-
-				# To form a 2x2 grid (4 points), we can:
-				# 1. Place triangle in lower half of a square
-				# 2. Add a fake 4th point to complete the square (e.g., duplicate one)
-
-				v0, v1, v2 = coords
-				v3 = v2 + (v1 - v0)  # crude extrapolation
-
-				patch_control = torch.tensor(
-					[[v0, v1],
-					 [v2, v3]],
-					dtype=torch.float32,
-					device=device
-				)
-
-				patches.add(patch_control)
-
-			return patches
+		tess_time = time()
+		print(f"Tessellator instantiated in {tess_time - all_start:.3f}s")
 
 		all_patches = []
 		for obj in objlist:
-			# try:
-			# list_all_faces(obj)
 			patches = None
 			print(f"OBJ {obj.name}")
 			try:
-				# obj["ssttess"] = pickle.dumps({
-				# 	"patches": data,
-				# })
-				# ssttess = obj["ssttess"]
-				# print("FFF")
-				# # print(f"SSTESS DATA: {ssttess}")
-				# if ssttess is not None:
-				# 	print(f"qwe123 {}")
-				# 	patches = pickle.loads(ssttess)
-				# 	print("qwe234")
-				# tmp_patches = ParametricPatches(n=2, m=2, device=device)
-				# tmp_patches = ParametricPatches(n=2, m=2, device=device)
-				# tmp_patches.load(Path(obj.name), device=device)
 				temp_path = Path(tempfile.gettempdir()) / f"{str(obj.name)}.npz"
-				# print(f"FFF loading from file: {temp_path}")
 				patches = ParametricPatches.load(temp_path, device=device)
 			except Exception as e:
 				print(f"Cannot get patches from obj[{obj.name}] {e}")
@@ -235,16 +141,13 @@ class SSTTESS_tessellate(bpy.types.Operator):
 				v, f, tu, tv = tessellator.tessellate(patches, degree=2, return_per_patch=True)
 				print(f"Number of control points: {len(patches.V)}")
 				print(f"Number of patches: {len(patches.F)}")
+				print('-TESS Done: {:.3f}s'.format(time() - tess_time))
 				add_tessellated_to_blender(v, f)
 
-			# all_patches.append(blender_object_to_parametric_patches_dynamic(obj, device=device))
-			# process_object_2(obj, n = 3, uv_grid_res=(uv_grid_res_x, uv_grid_res_y), device=device)
-
-
-		print('-All Done: {:.3f}s'.format(time() - all_start))
 		print(all_patches)
 		for patch in all_patches:
 			add_tessellated_to_blender(patch.V, patch.F)
+		print('-All Done: {:.3f}s'.format(time() - all_start))
 		return {"FINISHED"}
 
 	def invoke(self, context, event):
@@ -257,6 +160,21 @@ class SSTTESS_TessellateBezier(bpy.types.Operator):
 	bl_description = "Tessellate selected texture plane objects (Bezier)"
 	bl_options = {"REGISTER", "UNDO"}
 
+	uv_grid_res_x: bpy.props.IntProperty(
+		name="Grid size x (u) ",
+		description="Grid size y (u parameter)",
+		default=32,
+		min=4,
+		max=1024
+	)
+	uv_grid_res_y: bpy.props.IntProperty(
+		name="Grid size y (v) ",
+		description="Grid size y (v parameter)",
+		default=32,
+		min=4,
+		max=1024
+	)
+
 	@classmethod
 	def poll(cls, context):
 		return context.selected_objects
@@ -265,145 +183,112 @@ class SSTTESS_TessellateBezier(bpy.types.Operator):
 		# Classes that depend on torch are imported here, otherwise the plugin fails
 		import torch
 		import numpy as np
-		from .drpg import ParametricPatches
+		import bmesh
+		from .drpg import ParametricPatches, SurfaceTessellator
 
 		# TODO SST: Change this
 		device = torch.device('cpu')
-
-		def create_bezier_patch_mesh(patches, name="BezierPatches"):
-			# Convert torch tensors to numpy arrays
-			vertices = patches.V.cpu().numpy()
-			faces_idx = patches.F.cpu().numpy()
-
-			# Create a new mesh
-			mesh = bpy.data.meshes.new(name)
-
-			# For visualization, we'll create:
-			# 1. The control points as vertices
-			# 2. The control mesh edges
-			# 3. The actual patches as faces
-
-			# Create all vertices (control points)
-			mesh.vertices.add(len(vertices))
-			mesh.vertices.foreach_set("co", vertices.ravel())
-
-			# Create edges for control mesh
-			edges = []
-			n_patches = faces_idx.shape[0]
-			patch_size = faces_idx.shape[1]  # Assuming square patches (3x3)
-
-			for patch_idx in range(n_patches):
-				patch_faces = faces_idx[patch_idx]
-
-				# Add horizontal edges
-				for row in range(patch_size):
-					for col in range(patch_size - 1):
-						v1 = patch_faces[row, col]
-						v2 = patch_faces[row, col + 1]
-						edges.append((v1, v2))
-
-				# Add vertical edges
-				for col in range(patch_size):
-					for row in range(patch_size - 1):
-						v1 = patch_faces[row, col]
-						v2 = patch_faces[row + 1, col]
-						edges.append((v1, v2))
-
-			# Remove duplicate edges
-			edges = list(set(edges))
-			mesh.edges.add(len(edges))
-			mesh.edges.foreach_set("vertices", np.array(edges).ravel())
-
-			# Update mesh
-			mesh.update()
-
-			# Create object and link to scene
-			obj = bpy.data.objects.new(name, mesh)
-			bpy.context.collection.objects.link(obj)
-
-			return obj
-
-		def mesh_to_patches(obj, n: int, m: int) -> ParametricPatches:
-			assert obj.type == 'MESH', "Object must be a mesh"
-
-			mesh = obj.data
-			mesh.calc_loop_triangles()
-
-			# Extract all vertices
-			vertices = np.array([v.co for v in mesh.vertices], dtype=np.float32)
-			V = torch.tensor(vertices)
-
-			num_vertices_per_patch = n * m
-			total_vertices = V.shape[0]
-			assert total_vertices % num_vertices_per_patch == 0, "Cannot evenly divide vertices into patches"
-
-			# Optional: Store vertex layout (row-major patch grouping)
-			num_patches = total_vertices // num_vertices_per_patch
-
-			# Reconstruct dummy face index grid if needed
-			# (This assumes you follow the same logic as `generate_grid_faces`)
-			# For now we'll skip it
-
-			return ParametricPatches(V, n=n, m=m)
+		from .process_object import add_tessellated_to_blender
 
 		# END CLASSES/utils
 		all_start = time()
 
-		# ...that have 4 vertices or more
-		# objlist = [o for o in bpy.context.selected_objects if o.type == 'MESH' and len(o.data.vertices) >= 4]
-		# objlist = [o for o in bpy.context.selected_objects if o.type == 'MESH']
-		# all_object_types = [o.type for o in context.selected_objects]
-		# print(f'ALL OBJECT TYPES: {all_object_types}')
 		objlist = [o for o in context.selected_objects if o.type == 'MESH']
 		all_patches = []
 
-		n = 3
-		uv_grid_res_x = 64
-		uv_grid_res_y = 64
+		tessellator = SurfaceTessellator(uv_grid_resolution=(self.uv_grid_res_x, self.uv_grid_res_y), type=SurfaceType.Bezier)
+		tess_time = time()
+		print(f"Tessellator instantiated in {tess_time - all_start:.3f}s")
+		import pickle
 
 		print(f"Obj length: {len(objlist)}")
 		for obj in objlist:
-			# try:
-			# list_all_faces(obj)
 			patches = None
 			print(f"OBJ {obj.name}")
 			try:
-				patches = ParametricPatches.load(Path(obj.name), device=device)
+				temp_path = Path(tempfile.gettempdir()) / f"{str(obj.name)}.npz"
+				patches = ParametricPatches.load(temp_path, device=device)
 			except Exception as e:
 				continue
 			if (patches is not None):
-				print("DO BEZIER TESSELATION")
-
-			# print(f"SST TESSSSS OBJ: {patches}")
-			# print(f"\nProcessing object: {obj.name}")
-			# print(f"Mesh stats: {len(obj.data.vertices)} vertices, {len(obj.data.polygons)} faces")
-			#
-			# patches = mesh_to_patches(obj, n=3, m=3)
-			# print(f"Patches: {patches}")
-			# print(f"Number of control points: {len(patches.V)}")
-			# print(f"Number of patches: {len(patches.F)}")
-			# create_bezier_patch_mesh(patches, name="BezierPatches_2_0")
-			#
-			# patches = blender_to_parametric_patches(obj, n=2)
-			# print(f"Patches: {patches}")
-			# print(f"Number of control points: {len(patches.V)}")
-			# print(f"Number of patches: {len(patches.F)}")
-			# # create_bezier_patch_mesh(patches, name="BezierPatches_2_1")
-			#
-			#
-			# patches = mesh_to_parametric_patches(obj, n=3, m=3)
-			# print(f"Patches: {patches}")
-			# print(f"Number of control points: {len(patches.V)}")
-			# print(f"Number of patches: {len(patches.F)}")
-
-			# create_bezier_patch_mesh(patches, name="BezierPatches_2_2")
-
-			# except Exception as e:
-			# 	print(f"Failed to process {obj.name}: {str(e)}")
-			# 	continue
+				print("BEZIER TESSELATION")
+				v, f, tu, tv = tessellator.tessellate(patches, degree=2, return_per_patch=True)
+				print(f"Number of control points: {len(patches.V)}")
+				print(f"Number of patches: {len(patches.F)}")
+				print('-BEZ.TESS Done: {:.3f}s'.format(time() - tess_time))
+				add_tessellated_to_blender(v, f)
 
 		print('-All Done: {:.3f}s'.format(time() - all_start))
 		return {"FINISHED"}
+
+	def invoke(self, context, event):
+		return context.window_manager.invoke_props_dialog(self)
+
+class SSTTESS_TessellateCurve(bpy.types.Operator):
+	"""My Curve tessellation script"""
+	bl_idname = "object.ssttess_tessellate_curve"
+	bl_label = "SST Tessellate curve (NURBS)"
+	bl_description = "Tessellate selected texture plane objects (NURBS, curves)"
+	bl_options = {"REGISTER", "UNDO"}
+
+	curve_resolution: bpy.props.IntProperty(
+		name="Curve resolution",
+		description="Curve tessellation resolution",
+		default=32,
+		min=4,
+		max=1024
+	)
+
+	@classmethod
+	def poll(cls, context):
+		return context.selected_objects
+
+	def execute(self, context):
+		# Classes that depend on torch are imported here, otherwise the plugin fails
+		import torch
+
+		# TODO SST: Change this
+		device = torch.device('cpu')
+		from .drpg import ParametricPatches
+		from .drpg import CurveTessellator, circle_profile
+		from .process_object import add_tessellated_to_blender
+
+		# END CLASSES/utils
+		all_start = time()
+
+		all_object_types = [o.type for o in context.selected_objects]
+		objlist = [o for o in context.selected_objects if o.type == 'CURVE']
+
+		import torch
+		from pathlib import Path
+
+		profile = circle_profile(0.2)
+		tessellator = CurveTessellator((self.curve_resolution))
+
+		all_patches = []
+		for obj in objlist:
+			curves = None
+			print(f"OBJ {obj.name}")
+			try:
+				temp_path = Path(tempfile.gettempdir()) / f"{str(obj.name)}.npz"
+				curves = ParametricPatches.load(temp_path, device=device)
+			except Exception as e:
+				print(f"Cannot get curves from obj[{obj.name}] {e}")
+				continue
+			if curves is not None:
+				v, f, _, _, _ = tessellator.tessellate(curves=curves, profile=profile)
+				print(f"Number of control points: {len(curves.V)}")
+				add_tessellated_to_blender(v, f)
+
+		print('-TESS Done: {:.3f}s'.format(time() - all_start))
+		print(all_patches)
+		for patch in all_patches:
+			add_tessellated_to_blender(patch.V, patch.F)
+		print('-All Done: {:.3f}s'.format(time() - all_start))
+		return {"FINISHED"}
+
+	def invoke(self, context, event):
+		return context.window_manager.invoke_props_dialog(self)
 
 class SSTTESS_InstallModule(bpy.types.Operator):
 	bl_idname = "ssttess.install_module"
@@ -491,6 +376,14 @@ class SSTTESS_GenerateBezierSphere(bpy.types.Operator):
 	number_of_patches: bpy.props.IntProperty(
 		name="Number of patches",
 		description="Number of patches",
+		default=4,
+		min=4,
+		max=100
+	)
+
+	number_of_control_points: bpy.props.IntProperty(
+		name="Number of control points",
+		description="Number of control points",
 		default=5,
 		min=4,
 		max=100
@@ -507,76 +400,10 @@ class SSTTESS_GenerateBezierSphere(bpy.types.Operator):
 		from .drpg import bezier_sphere, ParametricPatches
 
 		device = torch.device("cpu")
-		patches = bezier_sphere(n=self.number_of_patches, device=device)
-
-		def create_bezier_patch_mesh_wireframe(patches, name="BezierPatches"):
-			# Convert torch tensors to numpy arrays
-			vertices = patches.V.cpu().numpy()
-			faces_idx = patches.F.cpu().numpy()
-
-			# Create a new mesh
-			mesh = bpy.data.meshes.new(name)
-
-			# For visualization, we'll create:
-			# 1. The control points as vertices
-			# 2. The control mesh edges
-			# 3. The actual patches as faces
-
-			# Create all vertices (control points)
-			mesh.vertices.add(len(vertices))
-			mesh.vertices.foreach_set("co", vertices.ravel())
-
-			# Create edges for control mesh
-			edges = []
-			n_patches = faces_idx.shape[0]
-			patch_size = faces_idx.shape[1]  # Assuming square patches (3x3)
-
-			for patch_idx in range(n_patches):
-				patch_faces = faces_idx[patch_idx]
-
-				# Add horizontal edges
-				for row in range(patch_size):
-					for col in range(patch_size - 1):
-						v1 = patch_faces[row, col]
-						v2 = patch_faces[row, col + 1]
-						edges.append((v1, v2))
-
-				# Add vertical edges
-				for col in range(patch_size):
-					for row in range(patch_size - 1):
-						v1 = patch_faces[row, col]
-						v2 = patch_faces[row + 1, col]
-						edges.append((v1, v2))
-
-			# Remove duplicate edges
-			edges = list(set(edges))
-			mesh.edges.add(len(edges))
-			mesh.edges.foreach_set("vertices", np.array(edges).ravel())
-
-			# Update mesh
-			mesh.update()
-
-			# Create object and link to scene
-			obj = bpy.data.objects.new(name, mesh)
-
-			# TODO SST: Attach the patches on the object
-			import pickle
-
-			data = {
-				'n': patches.n,
-				'm': patches.m,
-				'V': patches.V.cpu().detach().numpy(),
-				'F': patches.F.cpu().detach().numpy(),
-			}
-			obj["ssttess"] = pickle.dumps({
-				"patches": data,
-			})
-			print(f"FFF: {obj['ssttess']}")
-			bpy.context.collection.objects.link(obj)
-
-			return obj
+		patches = bezier_sphere(num_patches=self.number_of_patches, n=self.number_of_control_points, device=device)
 
 		import bpy
+		import bmesh
 
 		def create_blender_mesh_from_patches(patches: ParametricPatches, name="ParametricPatchObject"):
 			# Convert to CPU numpy arrays
@@ -620,24 +447,13 @@ class SSTTESS_GenerateBezierSphere(bpy.types.Operator):
 
 			return obj
 
-
 		print(f"Number of control points: {len(patches.V)}")
 		print(f"Number of patches: {len(patches.F)}")
 		print(f"Number of n: {patches.n} m: {patches.m}")
 
 		# Usage:
-		# create_bezier_patch_mesh_wireframe(patches)
 		create_blender_mesh_from_patches(patches)
 		return {"FINISHED"}
-		# np.random.seed(913)
-		# color = (np.random.rand(patches.F.shape[0], 3) * 255).astype(np.uint8)
-
-		# C = patches.V[patches.F]
-		# for i in range(patches.F.shape[0]):
-		# 	c = C[i]
-		#
-		# 	# Create geometry for the control mesh
-		# 	f = generate_grid_faces(patches.n, patches.m)
 
 	def invoke(self, context, event):
 		return context.window_manager.invoke_props_dialog(self)
@@ -663,36 +479,6 @@ class SSTTESS_GenerateTessellatedBezierSphere(bpy.types.Operator):
 		n = 5
 		patches = bezier_sphere(n=n, device=device, merge_duplicates=False)
 
-		# def evaluate_bezier_patch(control_points, resolution=10):
-		# 	"""Evaluate a Bézier patch at given resolution"""
-		# 	# control_points should be a 3x3x3 array
-		# 	u = np.linspace(0, 1, resolution)
-		# 	v = np.linspace(0, 1, resolution)
-		#
-		# 	# Bernstein basis functions
-		# 	B = lambda i, n, t: comb(n, i) * (t ** i) * ((1 - t) ** (n - i))
-		#
-		# 	points = []
-		# 	for ui in u:
-		# 		for vi in v:
-		# 			p = np.zeros(3)
-		# 			for i in range(3):
-		# 				for j in range(3):
-		# 					p += B(i, 2, ui) * B(j, 2, vi) * control_points[i, j]
-		# 			points.append(p)
-		#
-		# 	# Create faces
-		# 	faces = []
-		# 	for i in range(resolution - 1):
-		# 		for j in range(resolution - 1):
-		# 			v1 = i * resolution + j
-		# 			v2 = v1 + 1
-		# 			v3 = (i + 1) * resolution + j + 1
-		# 			v4 = (i + 1) * resolution + j
-		# 			faces.append((v1, v2, v3, v4))
-		#
-		# 	return np.array(points), np.array(faces)
-
 		print(f"Number of control points: {len(patches.V)}")
 		print(f"Number of patches: {len(patches.F)}")
 		tessellator = SurfaceTessellator(uv_grid_resolution=(32, 32),
@@ -703,11 +489,7 @@ class SSTTESS_GenerateTessellatedBezierSphere(bpy.types.Operator):
 
 		print(f"{v.shape=}, {f.shape=}")
 
-		name = "TessObj"
-
 		add_tessellated_to_blender(v, f)
-		# create_tessellated_patches(patches, resolution=10)
-		# create_tessellated_patches(reconstructed, resolution=10)
 		return {"FINISHED"}
 
 class SSTTESS_GenerateTessellatedBezierSphereWithNURBS(bpy.types.Operator):
@@ -731,36 +513,6 @@ class SSTTESS_GenerateTessellatedBezierSphereWithNURBS(bpy.types.Operator):
 		n = 5
 		patches = bezier_sphere(n=n, device=device, merge_duplicates=False)
 
-		# def evaluate_bezier_patch(control_points, resolution=10):
-		# 	"""Evaluate a Bézier patch at given resolution"""
-		# 	# control_points should be a 3x3x3 array
-		# 	u = np.linspace(0, 1, resolution)
-		# 	v = np.linspace(0, 1, resolution)
-		#
-		# 	# Bernstein basis functions
-		# 	B = lambda i, n, t: comb(n, i) * (t ** i) * ((1 - t) ** (n - i))
-		#
-		# 	points = []
-		# 	for ui in u:
-		# 		for vi in v:
-		# 			p = np.zeros(3)
-		# 			for i in range(3):
-		# 				for j in range(3):
-		# 					p += B(i, 2, ui) * B(j, 2, vi) * control_points[i, j]
-		# 			points.append(p)
-		#
-		# 	# Create faces
-		# 	faces = []
-		# 	for i in range(resolution - 1):
-		# 		for j in range(resolution - 1):
-		# 			v1 = i * resolution + j
-		# 			v2 = v1 + 1
-		# 			v3 = (i + 1) * resolution + j + 1
-		# 			v4 = (i + 1) * resolution + j
-		# 			faces.append((v1, v2, v3, v4))
-		#
-		# 	return np.array(points), np.array(faces)
-
 		print(f"Number of control points: {len(patches.V)}")
 		print(f"Number of patches: {len(patches.F)}")
 		tessellator = SurfaceTessellator(uv_grid_resolution=(32, 32),
@@ -771,14 +523,10 @@ class SSTTESS_GenerateTessellatedBezierSphereWithNURBS(bpy.types.Operator):
 
 		print(f"{v.shape=}, {f.shape=}")
 
-		name = "TessObj"
-
 		add_tessellated_to_blender(v, f)
-		# create_tessellated_patches(patches, resolution=10)
-		# create_tessellated_patches(reconstructed, resolution=10)
 		return {"FINISHED"}
 
-class SSTTESS_ImageReconstruction(bpy.types.Operator, ImportHelper):
+class SSTTESS_MultiviewReconstruction(bpy.types.Operator, ImportHelper):
 	"""Prompt the user to select images for image reconstruction."""
 	bl_idname = "ssttess.multiview_reconstruction"
 	bl_label = "SST Multiview reconstruction"
@@ -797,27 +545,119 @@ class SSTTESS_ImageReconstruction(bpy.types.Operator, ImportHelper):
 		# call the Multiview Reconstruction properly
 		return {'FINISHED'}
 
+class SSTTESS_GenerateBezierHelix(bpy.types.Operator):
+	"""My tessellation script - Example Bezier Helix generator"""
+	bl_idname = "ssttess.generate_bezier_helix"
+	bl_label = "SST Generate Bezier Helix (example)"
+	bl_description = "Generates example Bezier Helix"
+	bl_options = {"REGISTER", "UNDO"}
+
+	windings: bpy.props.IntProperty(
+		name="Number of windings",
+		description="Number of windings",
+		default=3,
+		min=2,
+		max=50
+	)
+
+	@classmethod
+	def poll(cls, context):
+		return True
+
+	def execute(self, context):
+		import numpy as np
+		import torch
+
+		from .drpg import bezier_helix, ParametricPatches, ParametricCurves
+
+		device = torch.device("cpu")
+		helix = bezier_helix(windings=self.windings, device=device)
+		curves = ParametricCurves(helix.shape[1], 3, device=device)
+		curves.add(helix)
+
+		import bpy
+
+		def create_blender_mesh_from_patches(p_curves: ParametricCurves, name="ParamCurveObject"):
+			V = p_curves.V
+			F = p_curves.F
+
+			# === Create a curve for each entry in F ===
+			print(f"V: {V}")
+			print(f"F: {F}")
+			# for i, f in enumerate(F):
+			# 	curve_data = bpy.data.curves.new(name=f"ParamCurve_{i}", type='CURVE')
+			# 	curve_data.dimensions = '3D'
+			#
+			# 	spline = curve_data.splines.new('POLY')  # Use 'BEZIER' or 'NURBS' if needed
+			# 	spline.points.add(len(f) - 1)
+			#
+			# 	for j, idx in enumerate(f):
+			# 		x, y, z = V[idx]
+			# 		spline.points[j].co = (x, y, z, 1.0)  # 4D: (x, y, z, w)
+			#
+			# 	# Set display resolution & bevel to make it visible
+			# 	curve_data.bevel_depth = 0.01
+			# 	curve_data.resolution_u = 12
+			#
+			# 	# Create object and link to scene
+			# 	curve_obj = bpy.data.objects.new(f"ParamCurveObj_{i}", curve_data)
+			# 	bpy.context.collection.objects.link(curve_obj)
+
+			curve_data = bpy.data.curves.new(name="ParamCurve", type='CURVE')
+			curve_data.dimensions = '3D'
+			curve_data.resolution_u = 32
+			curve_data.bevel_depth = 0.2  # Make the curves visible
+
+			for i, f in enumerate(F):
+				spline = curve_data.splines.new('POLY')
+				spline.points.add(len(f) - 1)
+
+				for j, idx in enumerate(f):
+					x, y, z = V[idx]
+					spline.points[j].co = (x, y, z, 1.0)
+
+			# Create ONE object and link it
+			curve_obj = bpy.data.objects.new(name, curve_data)
+			bpy.context.collection.objects.link(curve_obj)
+
+			temp_path = Path(tempfile.gettempdir()) / str(name)
+			p_curves.save(temp_path)
+
+		print(f"Number of control points: {len(curves.V)}")
+		print(f"Number of patches: {len(curves.F)}")
+
+		# Usage:
+		# create_bezier_patch_mesh_wireframe(patches)
+		create_blender_mesh_from_patches(curves)
+		return {"FINISHED"}
+
+	def invoke(self, context, event):
+		return context.window_manager.invoke_props_dialog(self)
 
 # REGISTER
 
 def menu_func(self, context):
-	self.layout.operator(SSTTESS_tessellate.bl_idname)
+	self.layout.operator(SSTTESS_Tessellate.bl_idname)
+	self.layout.operator(SSTTESS_TessellateCurve.bl_idname)
 	self.layout.operator(SSTTESS_GenerateBezierSphere.bl_idname)
 	self.layout.operator(SSTTESS_GenerateTessellatedBezierSphere.bl_idname)
 	self.layout.operator(SSTTESS_GenerateTessellatedBezierSphereWithNURBS.bl_idname)
 	self.layout.operator(SSTTESS_TessellateBezier.bl_idname)
-	self.layout.operator(SSTTESS_ImageReconstruction.bl_idname)
+	self.layout.operator(SSTTESS_MultiviewReconstruction.bl_idname)
+	self.layout.operator(SSTTESS_GenerateBezierHelix.bl_idname)
 
 
 classes = (
-	SSTTESS_tessellate,
+	SSTTESS_Tessellate,
+	SSTTESS_TessellateCurve,
 	SSTTESS_InstallModule,
 	SSTTESS_AddonPreferences,
 	SSTTESS_GenerateBezierSphere,
 	SSTTESS_GenerateTessellatedBezierSphere,
 	SSTTESS_TessellateBezier,
 	SSTTESS_GenerateTessellatedBezierSphereWithNURBS,
-	SSTTESS_ImageReconstruction,
+	SSTTESS_MultiviewReconstruction,
+	SSTTESS_GenerateBezierHelix,
 )
 
 

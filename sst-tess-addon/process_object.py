@@ -32,10 +32,6 @@ def detach_matrix(mm):
 
 
 def create_patch_mesh(name, verts, faces, collection=None):
-	import numpy as np
-	import bpy
-	import torch
-
 	# Convert PyTorch tensors to NumPy
 	verts_np = detach_matrix(verts)
 	faces_np = detach_matrix(faces)
@@ -162,40 +158,6 @@ def apply_transform_to_patch(verts, transform, device=None):
 	return transformed[..., :3]
 
 
-# def evaluate_bezier_patch(control_points, resolution=10):
-# 	"""Evaluate a Bézier patch at given resolution"""
-# 	# control_points should be a 3x3x3 array
-# 	u = np.linspace(0, 1, resolution)
-# 	v = np.linspace(0, 1, resolution)
-#
-# 	# Bernstein basis functions
-# 	B = lambda i, n, t: comb(n, i) * (t ** i) * ((1 - t) ** (n - i))
-#
-# 	# Create grid of evaluated points
-# 	points = np.zeros((resolution, resolution, 3))
-# 	for i, ui in enumerate(u):
-# 		for j, vi in enumerate(v):
-# 			p = np.zeros(3)
-# 			for m in range(3):
-# 				for n in range(3):
-# 					p += B(m, 2, ui) * B(n, 2, vi) * control_points[m, n]
-# 			points[i, j] = p
-#
-# 	# Flatten the points array
-# 	flat_points = points.reshape(-1, 3)
-#
-# 	# Create faces - now properly connecting all vertices
-# 	faces = []
-# 	for i in range(resolution - 1):
-# 		for j in range(resolution - 1):
-# 			v1 = i * resolution + j
-# 			v2 = v1 + 1
-# 			v3 = (i + 1) * resolution + j + 1
-# 			v4 = (i + 1) * resolution + j
-# 			faces.append((v1, v2, v3, v4))
-#
-# 	return flat_points, np.array(faces)
-
 def evaluate_bezier_patch(control_points, resolution=10):
 	"""Evaluate a 5×5 Bézier patch"""
 	u = np.linspace(0, 1, resolution)
@@ -258,11 +220,6 @@ def create_tessellated_patches(patches, resolution=10, name="TessellatedPatches"
 	obj = bpy.data.objects.new(name, mesh)
 	bpy.context.collection.objects.link(obj)
 	return obj
-
-
-import bpy
-import torch
-import numpy as np
 
 
 def mesh_to_parametric_patches_old(obj, n=3, m=None, device=None):
@@ -485,6 +442,107 @@ def add_tessellated_to_blender(v: torch.Tensor, f: torch.Tensor, name="Tessellat
 	obj = bpy.data.objects.new(name, mesh)
 	bpy.context.collection.objects.link(obj)
 	return obj
+
+
+def create_bezier_patch_mesh_wireframe(patches, name="BezierPatches"):
+	vertices = patches.V.cpu().numpy()
+	faces_idx = patches.F.cpu().numpy()
+
+	mesh = bpy.data.meshes.new(name)
+	# For visualization, we'll create:
+	# 1. The control points as vertices
+	# 2. The control mesh edges
+	# 3. The actual patches as faces
+
+
+	# Control points
+	mesh.vertices.add(len(vertices))
+	mesh.vertices.foreach_set("co", vertices.ravel())
+
+	# Edges for control mesh
+	edges = []
+	n_patches = faces_idx.shape[0]
+	patch_size = faces_idx.shape[1]  # Assuming square patches (3x3)
+
+	for patch_idx in range(n_patches):
+		patch_faces = faces_idx[patch_idx]
+
+		# Horizontal edges
+		for row in range(patch_size):
+			for col in range(patch_size - 1):
+				v1 = patch_faces[row, col]
+				v2 = patch_faces[row, col + 1]
+				edges.append((v1, v2))
+
+		# Vertical edges
+		for col in range(patch_size):
+			for row in range(patch_size - 1):
+				v1 = patch_faces[row, col]
+				v2 = patch_faces[row + 1, col]
+				edges.append((v1, v2))
+
+	# Remove duplicate edges, same as in their library (still under testing whether it is fully needed)
+	edges = list(set(edges))
+	mesh.edges.add(len(edges))
+	mesh.edges.foreach_set("vertices", np.array(edges).ravel())
+
+	# Update mesh
+	mesh.update()
+
+	# Create object and link to scene
+	obj = bpy.data.objects.new(name, mesh)
+
+	# NOTE SST: Attach the patches on the object
+	import pickle
+
+	data = {
+		'n': patches.n,
+		'm': patches.m,
+		'V': patches.V.cpu().detach().numpy(),
+		'F': patches.F.cpu().detach().numpy(),
+	}
+	obj["ssttess"] = pickle.dumps({
+		"patches": data,
+	})
+	print(f"FFF: {obj['ssttess']}")
+	bpy.context.collection.objects.link(obj)
+
+	return obj
+
+def blender_object_to_parametric_patches_dynamic(obj, device: torch.device = None) -> ParametricPatches:
+	"""Convert any Blender mesh into ParametricPatches by treating each face as a patch."""
+	if obj.type != 'MESH':
+		raise ValueError("Object must be a mesh")
+
+	mesh = obj.data
+	mesh.calc_loop_triangles()
+
+	patches = ParametricPatches(n=2, m=2, device=device)  # Each face -> 2x2 patch (4 verts)
+
+	for tri in mesh.loop_triangles:
+		if len(tri.vertices) != 3:
+			continue  # skip non-triangles
+
+		# Get triangle vertex coordinates
+		coords = [mesh.vertices[v].co for v in tri.vertices]
+
+		# To form a 2x2 grid (4 points), we can:
+		# 1. Place triangle in lower half of a square
+		# 2. Add a fake 4th point to complete the square (e.g., duplicate one)
+
+		v0, v1, v2 = coords
+		v3 = v2 + (v1 - v0)  # crude extrapolation
+
+		patch_control = torch.tensor(
+			[[v0, v1],
+			 [v2, v3]],
+			dtype=torch.float32,
+			device=device
+		)
+
+		patches.add(patch_control)
+
+	return patches
 
 
 def process_object(obj, n=3, uv_grid_res=(64, 64), device=None):

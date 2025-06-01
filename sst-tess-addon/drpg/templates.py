@@ -39,7 +39,7 @@ def teaser_surface(device: torch.device):
 
     return patches
 
-def bezier_sphere(num_patches: int=4, n: int=3, device: torch.device = None):
+def bezier_sphere(num_patches: int=4, n: int=3, device: torch.device = None, merge_duplicates: bool=True):
     """ Build a sphere-like object from Bézier tensor product surfaces
     """
 
@@ -62,14 +62,16 @@ def bezier_sphere(num_patches: int=4, n: int=3, device: torch.device = None):
         patch = torch.stack([torch.sin(theta)*torch.sin(phi), torch.cos(theta), torch.sin(theta)*torch.cos(phi)], dim=-1)
         patches.add(patch)
 
-    patches.merge_duplicate_vertices()
+    if merge_duplicates:
+        print(f"Merging duplicate vertices")
+        patches.merge_duplicate_vertices()
 
     return patches
 
 def bezier_cube(n: int=3, m: int=None, scale: float=1, device: torch.device=None):
     """ Build a cube from Bézier tensor product surfaces
     """
-    
+
     if m is None:
         m = n
 

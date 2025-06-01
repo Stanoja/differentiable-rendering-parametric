@@ -1,3 +1,5 @@
+import numpy as np
+from pathlib import Path
 from enum import Enum, IntEnum
 import torch
 from typing import Union, List
@@ -22,6 +24,26 @@ class ParametricCurves:
         curves_new.V = V
         curves_new.F = self.F
         return curves_new
+
+    def save(self, path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            'n': self.n,
+            'd': self.d,
+            'V': self.V.cpu().detach().numpy(),
+            'F': self.F.cpu().detach().numpy(),
+        }
+        np.savez(path, **data)
+
+    @classmethod
+    def load(cls, path: Path, device=torch.device):
+        data = np.load(path)
+        n         = int(data['n'])
+        d         = int(data['d'])
+        patches   = cls(n=n, d=d, device=device)
+        patches.V = torch.from_numpy(data['V']).to(device=device)
+        patches.F = torch.from_numpy(data['F']).to(device=device)
+        return patches
 
     def add(self, P: torch.Tensor) -> Union[int, List[int]]:
         """ Add the control mesh of a curve

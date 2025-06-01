@@ -24,11 +24,11 @@ class ParametricPatches:
         device: 
     """
 
-    def __init__(self, n: int, m: int = None, device: torch.device = None):
+    def __init__(self, n: int, m: int = None, device: torch.device = None, V = None, F = None):
         self.n = n
         self.m = n if m is None else m
-        self.V = torch.zeros((0, 3), dtype=torch.float32, device=device)           # Control point positions
-        self.F = torch.zeros((0, self.n, self.m), dtype=torch.long, device=device) # Indices for the patches
+        self.V = torch.zeros((0, 3), dtype=torch.float32, device=device) if V is None else V           # Control point positions
+        self.F = torch.zeros((0, self.n, self.m), dtype=torch.long, device=device) if F is None else F # Indices for the patches
 
     def save(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)

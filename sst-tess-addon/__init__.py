@@ -11,7 +11,9 @@ import mathutils
 # TODO SST: This is a temporary workaround
 import sys
 
-sys.path.append("/Users/sstanoje/.local/lib/python3.11/site-packages/NURBSDiff-0.0.0-py3.11-macosx-15.4-arm64.egg")
+# In case there are missing sites, use this example.
+# I had problem with NURBSDiff package, so I compiled it and added it in the path.
+sys.path.append("~/.local/lib/python3.11/site-packages/NURBSDiff-0.0.0-py3.11-macosx-15.4-arm64.egg")
 
 import bpy
 # from bpy.types import Operator

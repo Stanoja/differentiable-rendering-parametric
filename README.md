@@ -17,6 +17,14 @@
   </p>
 </p>
 
+## Fork
+This is a fork that partially adapts the code and introduces a layer so it can be used as a Blender addon.
+Follow the rest of the setup in this readme, just make sure to run the installations with Blender's Python version.
+
+Copy the `sst-test-addon` folder or checkout this repo in your Blender addons folder.
+
+This is a project for differential programming.
+
 ## About
 
 This repository contains the official implementation of the paper "Differentiable Rendering of Parametric Geometry", which proposes techniques for robust differentiable rendering of parametric spline geometry. The implementation is based on PyTorch and is provided as installable package `drpg`. The following modules may be of primary interest to most users:
@@ -117,3 +125,4 @@ If you find this code or our method useful for your academic research, please ci
   doi = {10.1145/3618387},
 }
 ```
+
